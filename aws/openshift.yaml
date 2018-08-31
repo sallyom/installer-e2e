@@ -1,0 +1,58 @@
+admin:
+  email: "${EMAIL}"
+  password: "${PASSWORD}"
+  sshKey: "ssh-rsa AAAAB3NzaCblahblah" 
+aws:
+  ec2AMIOverride: "${EC2_AMI_OVERRIDE}"
+
+  external:
+  extraTags: {"expirationDate": "${EXPIRATION_DATE}"}
+
+  master:
+    ec2Type: t2.medium
+    rootVolume:
+      iops: 100
+      size: 30
+      type: gp2
+
+  publicEndpoints: true
+  region: us-east-1
+  vpcCIDRBlock: 10.0.0.0/16
+
+  worker:
+    ec2Type: t2.medium
+    rootVolume:
+      iops: 100
+      size: 30
+      type: gp2
+
+baseDomain: openshiftdemo.org
+ca:
+iscsi:
+licensePath: license
+
+master:
+  nodePools:
+    - master
+
+name: "${NAME}"
+
+networking:
+  podCIDR: 10.2.0.0/16
+
+  serviceCIDR: 10.3.0.0/16
+
+nodePools:
+  - count: 1
+    name: master
+
+  - count: 1
+    name: worker
+
+platform: aws
+
+pullSecretPath: pull-secret
+
+worker:
+  nodePools:
+    - worker
