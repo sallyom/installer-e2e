@@ -13,9 +13,11 @@ parameters:
   required: true
 - name: IMAGE_INSTALLER
   required: true
-- name: IMAGE_INSTALLER_SMOKE
+- name: IMAGE_CLI
   required: true
 - name: IMAGE_TESTS
+  required: true
+- name: IMAGE_INSTALLER_SMOKE
   required: true
 - name: CLUSTER_TYPE
   #required: true
@@ -59,6 +61,7 @@ objects:
     - name: license-pull-secret-aws
       secret:
         secretName: cluster-secrets-aws
+
     initContainers:
     - name: cli
       image: ${IMAGE_CLI}
@@ -69,15 +72,15 @@ objects:
       - cp
       - /usr/bin/oc
       - /tmp/shared/oc
-
     - name: smoke-test
       image: ${IMAGE_INSTALLER_SMOKE}
       volumeMounts:
       - name: shared-tmp
         mountPath: /tmp/shared
       command:
-     - cp
-     - /usr/bin/smoke
+      - cp
+     #- /go/src/github.com/openshift/installer/bazel-bin/tests/smoke/linux_amd64_stripped/go_default_test
+      - /usr/bin/smoke
       - /tmp/shared/smoke
 
     containers:
@@ -113,8 +116,6 @@ objects:
 
         trap 'touch /tmp/shared/exit' EXIT
         trap 'kill $(jobs -p); exit 0' TERM
-
-        cp "$(which oc)" /tmp/shared/
 
         mkdir -p "${HOME}"
 
@@ -152,31 +153,6 @@ objects:
         mkdir -p /tmp/output
         cd /tmp/output
 
-        # install telemetry client (TEMPORARY)
-        set +e
-        curl https://raw.githubusercontent.com/openshift/telemeter/master/deploy/default-rules > /tmp/rules
-        oc create ns openshift-telemetry
-        oc adm policy add-cluster-role-to-user cluster-reader -z default -n openshift-telemetry
-        oc create secret generic telemeter-client --from-literal=to=https://telemeter.svc.ci.openshift.org --from-literal=id=${NAMESPACE}-${JOB_NAME_HASH} --from-file=token=/tmp/cluster/telemeter-token --from-literal=salt=random-salt --from-file=rules=/tmp/rules --dry-run -o yaml | oc apply -n openshift-telemetry -f -
-        oc create -f https://raw.githubusercontent.com/openshift/telemeter/master/deploy/telemeter-client-openshift.yaml -n openshift-telemetry
-        set -e
-
-        # TODO: the test binary should really be a more structured command - most of these flags should be
-        #       autodetected from the running cluster.
-        # TODO: bump nodes up to 40 again
-        set -x
-        if [[ -n "${TEST_SUITE}" || -n "${TEST_FOCUS}" ]]; then
-          ginkgo -v -noColor -nodes=30 $( which extended.test ) -- \
-            -suite "${TEST_SUITE}" -ginkgo.focus="${TEST_FOCUS}" -ginkgo.skip="${TEST_SKIP}" \
-            -e2e-output-dir /tmp/artifacts -report-dir /tmp/artifacts/junit \
-            -test.timeout=10m ${PROVIDER_ARGS-} || rc=$?
-        fi
-        if [[ -n "${TEST_SUITE_SERIAL}" || -n "${TEST_FOCUS_SERIAL}" ]]; then
-          ginkgo -v -noColor -nodes=1 $( which extended.test ) -- \
-            -suite "${TEST_SUITE_SERIAL}" -ginkgo.focus="${TEST_FOCUS_SERIAL}" -ginkgo.skip="${TEST_SKIP_SERIAL}" \
-            -e2e-output-dir /tmp/artifacts -report-dir /tmp/artifacts/junit/serial \
-            -test.timeout=20m ${PROVIDER_ARGS-} || rc=$?
-        fi
         exit ${rc:-0}
 
     # Runs an install
@@ -221,16 +197,15 @@ objects:
 
         mkdir /tmp/cluster
         cp /etc/openshift-installer/* /tmp/cluster/
-
         export NAME=${INSTANCE_PREFIX}
         (
           export EMAIL=test@ci.openshift.io
           export PASSWORD=$( date +%s | sha256sum | base64 | head -c 32 ; echo )
           export SSH_KEY="$( cat /etc/openshift-installer/ssh-publickey )"
-          export EC2_AMI_OVERRIDE=ami-02323e873420d8eab
+          export EC2_AMI_OVERRIDE=ami-07307c397daf4d02e
           export EXPIRATION_DATE=$( date -d '4 hours' --iso=minutes --utc )
+
           envsubst </etc/openshift-installer/openshift.yaml >/tmp/cluster/inputs.yaml
-          cat /etc/openshift-installer/openshift.yaml | envsubst > /tmp/cluster/inputs.yaml
         )
         mkdir /tmp/artifacts/installer
         cp /tmp/cluster/inputs.yaml /tmp/artifacts/installer/
@@ -248,7 +223,6 @@ objects:
         cp config.yaml internal.yaml terraform.tfvars /tmp/artifacts/installer/
 
         tectonic install --dir=. --log-level=debug
-
         # wait until oc shows up
         while true; do
           if [[ -f /tmp/exit ]]; then
@@ -287,91 +261,20 @@ objects:
         fi
         cp $KUBECONFIG /tmp/admin.kubeconfig
         echo "Installation successful"
-    
-    # Runs smoke tests
-    - name: smoke-tests
-      image: quay.io/coreos/tectonic-smoke-test-env:v5.6
-      volumeMounts:
-      - name: shared-tmp
-        mountPath: /tmp/shared
-      - name: cluster-profile
-        mountPath: /tmp/cluster
-      - name: artifacts
-        mountPath: /tmp/artifacts
-      env:
-      - name: HOME
-        value: /tmp/shared
-      - name: KUBECONFIG
-        value: /tmp/shared/cluster/generated/auth/kubeconfig
-      - name: SMOKE_KUBECONFIG
-        value: /tmp/shared/cluster/generated/auth/kubeconfig
-      - name: SMOKE_MANIFEST_PATHS
-        value: /tmp/shared/cluster/generated/manifests
-      # 3 masters/3 workers/1 bootstrap(if post remove etcd)
-      - name: SMOKE_NODE_COUNT
-      #  value: 7
-      # TODO:edited for local testing, will change back
-        value: 3
-      command:
-      - /bin/bash
-      - -c
-      - |
-        #!/bin/bash
-        set -euo pipefail
-        set -x
-
-        trap 'rc=$?; if [[ $rc -ne 0 ]]; then touch /tmp/exit; fi; exit $rc' EXIT
-        trap 'kill $(jobs -p); exit 0' TERM            
-
-        # wait until oc shows up
-        while true; do
-          if [[ -f /tmp/shared/exit ]]; then
-            echo "Interrupted"
-            cp $KUBECONFIG /tmp/shared/admin.kubeconfig
-            exit 1
-          fi
-          if [[ ! -f /tmp/shared/oc ]]; then
-            echo "Waiting for oc binary to show up ..."
-            sleep 15 & wait
-            continue
-          fi
-          if ! /tmp/shared/oc get nodes 2>/dev/null; then
-            echo "Waiting for API at $(/tmp/shared/oc whoami --show-server) to respond ..."
-            sleep 15 & wait
-            continue
-          fi
-          # check multiple namespaces while we are transitioning to the new locations
-          if /tmp/shared/oc get deploy/router -n tectonic-ingress 2>/dev/null; then
-            router_namespace=tectonic-ingress
-          elif /tmp/shared/oc get deploy/router -n openshift-ingress 2>/dev/null; then
-            router_namespace=openshift-ingress
-          elif /tmp/shared/oc get deploy/router -n default 2>/dev/null; then
-            router_namespace=default
-          else
-            echo "Waiting for router to be created ..."
-            sleep 15 & wait
-            continue
-          fi
-          break
-        done
-        if ! /tmp/shared/oc wait deploy/router -n "${router_namespace}" --for condition=available --timeout=20m; then
-          echo "Cluster failed"
-          cp $KUBECONFIG /tmp/shared/admin.kubeconfig
+        echo "Starting installer smoke tests..."
+        export SMOKE_KUBECONFIG=${KUBECONFIG}
+        export SMOKE_MANIFEST_PATHS=/tmp/cluster/generated/manifests
+        # 3 masters/3 workers/1 bootstrap(if post remove etcd)
+        export SMOKE_NODE_COUNT=3
+        if ! /tmp/smoke -cluster -test.v; then
+          echo "Smoke tests failed"
           exit 1
         fi
-        cp $KUBECONFIG /tmp/shared/admin.kubeconfig
-        echo "Cluster running"
-        echo "Starting installer smoke tests..."
-            cd /tmp/shared/cluster
-            if ! bazel-bin/tests/smoke/linux_amd64_stripped/go_default_test -cluster -test.v
-              echo "Smoke tests failed"
-              exit 1
-            fi
-            echo "Smoke tests passed"
+        echo "Smoke tests passed"
 
     # Performs cleanup of all created resources
     - name: teardown
-      image: ${IMAGE_INSTALLER}
+      image: ${IMAGE_INSTALLER_SMOKE}
       volumeMounts:
       - name: shared-tmp
         mountPath: /tmp/shared
