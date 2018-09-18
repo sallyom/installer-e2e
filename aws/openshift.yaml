@@ -3,8 +3,6 @@ admin:
   password: "${PASSWORD}"
   sshKey: "ssh-rsa AAAAB3NzaCblahblah" 
 aws:
-  ec2AMIOverride: "${EC2_AMI_OVERRIDE}"
-
   external:
   extraTags: {"expirationDate": "${EXPIRATION_DATE}"}
 
@@ -29,7 +27,6 @@ aws:
 baseDomain: openshiftdemo.org
 ca:
 iscsi:
-licensePath: license
 
 master:
   nodePools:

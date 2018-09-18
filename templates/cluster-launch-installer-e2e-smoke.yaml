@@ -8,7 +8,7 @@ parameters:
   required: true
 - name: NAMESPACE
   #required: true
-  value: "your-ns"
+  value: "somalley-40"
 - name: IMAGE_FORMAT
   required: true
 - name: IMAGE_INSTALLER
@@ -58,7 +58,7 @@ objects:
     - name: cluster-profile
       secret:
         secretName: ${JOB_NAME_SAFE}-cluster-profile
-    - name: license-pull-secret-aws
+    - name: pull-secret-aws
       secret:
         secretName: cluster-secrets-aws
 
@@ -170,9 +170,9 @@ objects:
         mountPath: /tmp/artifacts
       # TODO
       # This is how I uploaded creds from local system:
-      # oc create secret -n ns-name generic cluster-secrets-aws --from-file=/path/to/secret/pull-secret --from-file=/path/to/secret/license --from-file=/path/to/secret/credentials -o yaml --dry-run | oc apply -n ns-name -f -
-      - name: license-pull-secret-aws
-        mountPath: /tmp/license-pull-secret-aws
+      # oc create secret -n ns-name generic cluster-secrets-aws --from-file=/path/to/secret/pull-secret --from-file=/path/to/secret/credentials -o yaml --dry-run | oc apply -n ns-name -f -
+      - name: pull-secret-aws
+        mountPath: /tmp/pull-secret-aws
       env:
       - name: INSTANCE_PREFIX
         value: ${NAMESPACE}-${JOB_NAME_HASH}
@@ -213,10 +213,10 @@ objects:
         echo "Invoking installer ..."
         
         cd /tmp/cluster
-        ls -al /tmp/license-pull-secret-aws
-        cp /tmp/license-pull-secret-aws/* .
+        ls -al /tmp/pull-secret-aws
+        cp /tmp/pull-secret-aws/* .
         # Uploaded from local system, via secret cluster-secrets-aws
-        cp /tmp/license-pull-secret-aws/credentials /tmp/cluster/credentials
+        cp /tmp/pull-secret-aws/credentials /tmp/cluster/credentials
 
         tectonic init --config=inputs.yaml
         mv -f ${NAME}/* /tmp/cluster/

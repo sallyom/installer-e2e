@@ -15,14 +15,11 @@ Then:
 3. oc create secret -n your-namespace generic cluster-secrets-aws \
                     --from-file=secret/credentials \
                     --from-file=secret/pull-secret \
-                    --from-file=secret/license \
                     --from-file=secret/ssh-privatekey \
                     --from-file=secret/ssh-publickey \
                     -o yaml --dry-run | oc -n your-namespace apply -f -
 4. ci-operator -template templates/cluster-launch-installer-e2e.yaml \
                -config /path/to/openshift/release/ci-operator/config/openshift/installer/master.json \
-               -secret-dir=aws \
-               -secret-dir=secret \
                -git-ref=your-gh-username/installer@your-branch \
                -namespace=your-namespace
 

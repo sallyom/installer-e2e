@@ -1,5 +1,0 @@
-ci-operator -template templates/cluster-launch-installer-e2e.yaml -config /path/to/openshift/release/ci-operator/config/openshift/installer/master.json -secret-dir=aws -secret-dir=secret -git-ref=your-gh-username/installer@your-branch -namespace=your-namespace
-
-oc create secret generic dev-cluster-profile --from-file=aws/openshift.yaml -n your-namespace
-
-oc create secret -n your-namespace generic cluster-secrets-aws --from-file=secret/credentials --from-file=secret/pull-secret --from-file=secret/license -o yaml --dry-run | oc -n your-namespace apply -f -

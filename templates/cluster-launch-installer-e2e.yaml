@@ -62,7 +62,7 @@ objects:
     - name: cluster-profile
       secret:
         secretName: ${JOB_NAME_SAFE}-cluster-profile
-    - name: license-pull-secret-aws
+    - name: pull-secret-aws
       secret:
         secretName: cluster-secrets-aws
     initContainers:
@@ -187,8 +187,8 @@ objects:
         mountPath: /etc/openshift-installer
       - name: artifacts
         mountPath: /tmp/artifacts
-      - name: license-pull-secret-aws
-        mountPath: /tmp/license-pull-secret-aws
+      - name: pull-secret-aws
+        mountPath: /tmp/pull-secret-aws
       env:
       - name: INSTANCE_PREFIX
         value: ${NAMESPACE}-${JOB_NAME_HASH}
@@ -214,9 +214,9 @@ objects:
         mkdir /tmp/cluster
         cp /etc/openshift-installer/* /tmp/cluster/
         #DEBUG
-        ls -al /tmp/license-pull-secret-aws
-        cp /tmp/license-pull-secret-aws/* .
-        #cp /tmp/license-pull-secret-aws/credentials /tmp/cluster/credentials
+        ls -al /tmp/pull-secret-aws
+        cp /tmp/pull-secret-aws/* .
+        #cp /tmp/pull-secret-aws/credentials /tmp/cluster/credentials
 
 
         export NAME=${INSTANCE_PREFIX}
