@@ -11,15 +11,14 @@ pass.
 
 Then: 
 1. oc new-project my-namespace
-2. oc create secret generic dev-cluster-profile --from-file=aws/openshift.yaml -n your-namespace
 3. oc create secret -n your-namespace generic cluster-secrets-aws \
                     --from-file=secret/credentials \
                     --from-file=secret/pull-secret \
                     --from-file=secret/ssh-privatekey \
                     --from-file=secret/ssh-publickey \
                     -o yaml --dry-run | oc -n your-namespace apply -f -
-4. ci-operator -template templates/cluster-launch-installer-e2e.yaml \
-               -config /path/to/openshift/release/ci-operator/config/openshift/installer/master.json \
+4. ci-operator -template templates/cluster-launch-installer-e2e-new.yaml \
+               -config /path/to/openshift/release/ci-operator/config/openshift/installer/master.yaml \
                -git-ref=your-gh-username/installer@your-branch \
                -namespace=your-namespace
 
@@ -36,13 +35,7 @@ From the CI web console in your project, go to pod/dev container/setup and in th
 kubeconfig is at /tmp/shared/cluster/generated/auth/kubeconfig.  Copy that to your local system, then
 export KUBECONFIG=/path/to/copied/kubeconfig.
 
-It's a real PITA to clean up your AWS resources from a cluster started in this way, so be prepared
-to manually clean things up (or create a script to do so, I have not yet).
-Resources you'll need to manage/delete:
-- ec2 instances
-- route53 record sets and hosted zones
-- load balancers
-- s3 bucket
-- VPCs and then after deletion release all EIP addresses
-
-IAM roles/IAM resources will also need to be deleted (generally you won't have permission to do that).
+Clean up your AWS resources from a cluster!!!
+1. git clone git@github.com:openshift/hive.git
+2. cd hive; make hiveutil
+3. bin/hiveutil aws-tag-deprovision --cluster-name your-cluster-name --loglevel debug tectonicClusterID=see-aws-console-for-tag
