@@ -7,7 +7,7 @@ parameters:
 - name: JOB_NAME_HASH
   required: true
 - name: NAMESPACE
-  #required: true
+  # MODIFIED HERE, USE YOUR NAMESPACE
   value: "your-ns"
 - name: IMAGE_FORMAT
   required: true
@@ -16,16 +16,18 @@ parameters:
 - name: IMAGE_TESTS
   required: true
 - name: CLUSTER_TYPE
+  # MODIFIED HERE, SPECIFY "aws"
   #required: true
   value: "aws"
 - name: TEST_FOCUS
-  #required: true
-  value: Suite:openshift/conformance/parallel
 - name: TEST_SKIP
 - name: TEST_FOCUS_SERIAL
-  #required: true
-  value: Suite:openshift/conformance/serial
 - name: TEST_SKIP_SERIAL
+- name: TEST_PARALLELISM
+  value: "30"
+# Ensures the release image is created and tested
+- name: TEST_COMMAND
+  #- name: RELEASE_IMAGE_LATEST
 
 objects:
 
@@ -59,25 +61,13 @@ objects:
       emptyDir: {}
     - name: shared-tmp
       emptyDir: {}
-    - name: cluster-profile
-      secret:
-        secretName: ${JOB_NAME_SAFE}-cluster-profile
+    # MODIFIED HERE, added creds secret
     - name: pull-secret-aws
       secret:
         secretName: cluster-secrets-aws
-    initContainers:
-    - name: cli
-      image: ${IMAGE_CLI}
-      volumeMounts:
-      - name: shared-tmp
-        mountPath: /tmp/shared
-      command:
-      - cp
-      - /usr/bin/oc
-      - /tmp/shared/oc
 
     containers:
-    
+
     # Once admin.kubeconfig exists, executes shared tests
     - name: test
       image: ${IMAGE_TESTS}
@@ -91,8 +81,6 @@ objects:
       volumeMounts:
       - name: shared-tmp
         mountPath: /tmp/shared
-      - name: cluster-profile
-        mountPath: /tmp/cluster
       - name: artifacts
         mountPath: /tmp/artifacts
       env:
@@ -141,8 +129,7 @@ objects:
           cp /tmp/cluster/ssh-privatekey ~/.ssh/google_compute_engine || true
           export PROVIDER_ARGS='-provider=gce -gce-zone=us-east1-c -gce-project=openshift-gce-devel-ci'
         elif [[ "${CLUSTER_TYPE}" == "aws" ]]; then
-          region="$( python -c 'import sys, json; print json.load(sys.stdin)["tectonic_aws_region"]' </tmp/shared/cluster/terraform.tfvars )"
-          export PROVIDER_ARGS="-provider=aws -gce-zone=${region}"
+          export PROVIDER_ARGS="-provider=aws -gce-zone=us-east-1"
           mkdir -p ~/.ssh
           cp /tmp/cluster/ssh-privatekey ~/.ssh/kube_aws_rsa || true
         fi
@@ -163,15 +150,15 @@ objects:
         #       autodetected from the running cluster.
         # TODO: bump nodes up to 40 again
         set -x
-        if [[ -n "${TEST_SUITE}" || -n "${TEST_FOCUS}" ]]; then
-          ginkgo -v -noColor -nodes=30 $( which extended.test ) -- \
-            -suite "${TEST_SUITE}" -ginkgo.focus="${TEST_FOCUS}" -ginkgo.skip="${TEST_SKIP}" \
+        if [[ -n "${TEST_FOCUS}" ]]; then
+          ginkgo -v -noColor -nodes=${TEST_PARALLELISM} $( which extended.test ) -- \
+            -ginkgo.focus="${TEST_FOCUS}" -ginkgo.skip="${TEST_SKIP}" \
             -e2e-output-dir /tmp/artifacts -report-dir /tmp/artifacts/junit \
             -test.timeout=10m ${PROVIDER_ARGS-} || rc=$?
         fi
-        if [[ -n "${TEST_SUITE_SERIAL}" || -n "${TEST_FOCUS_SERIAL}" ]]; then
+        if [[ -n "${TEST_FOCUS_SERIAL}" ]]; then
           ginkgo -v -noColor -nodes=1 $( which extended.test ) -- \
-            -suite "${TEST_SUITE_SERIAL}" -ginkgo.focus="${TEST_FOCUS_SERIAL}" -ginkgo.skip="${TEST_SKIP_SERIAL}" \
+            -ginkgo.focus="${TEST_FOCUS_SERIAL}" -ginkgo.skip="${TEST_SKIP_SERIAL}" \
             -e2e-output-dir /tmp/artifacts -report-dir /tmp/artifacts/junit/serial \
             -test.timeout=20m ${PROVIDER_ARGS-} || rc=$?
         fi
@@ -183,10 +170,9 @@ objects:
       volumeMounts:
       - name: shared-tmp
         mountPath: /tmp
-      - name: cluster-profile
-        mountPath: /etc/openshift-installer
       - name: artifacts
         mountPath: /tmp/artifacts
+      # MODIFIED HERE, added my creds secret
       - name: pull-secret-aws
         mountPath: /tmp/pull-secret-aws
       env:
@@ -194,51 +180,40 @@ objects:
         value: ${NAMESPACE}-${JOB_NAME_HASH}
       - name: TYPE
         value: ${CLUSTER_TYPE}
-      # TODO
-      # This is how I ran from local system
-      # Uploaded from local system, via secret cluster-secrets-aws
       - name: AWS_SHARED_CREDENTIALS_FILE
+        # MODIFIED HERE, added path to files in my secret
+        #value: /etc/openshift-installer/.awscred
         value: /tmp/cluster/credentials
       - name: KUBECONFIG
-        value: /tmp/cluster/generated/auth/kubeconfig
+        value: /tmp/artifacts/installer/auth/kubeconfig
       command:
       - /bin/bash
       - -c
       - |
         #!/bin/bash
-        #set -euo pipefail
-        set -x
+        set -euo pipefail
 
         trap 'rc=$?; if [[ $rc -ne 0 ]]; then touch /tmp/exit; fi; exit $rc' EXIT
+        trap 'kill $(jobs -p); exit 0' TERM
 
         mkdir /tmp/cluster
-        cp /etc/openshift-installer/* /tmp/cluster/
-        #DEBUG
-        ls -al /tmp/pull-secret-aws
-        cp /tmp/pull-secret-aws/* .
-        #cp /tmp/pull-secret-aws/credentials /tmp/cluster/credentials
+        cp /tmp/pull-secret-aws/* /tmp/cluster/
 
-
-        export NAME=${INSTANCE_PREFIX}
-        (
-          export EMAIL=test@ci.openshift.io
-          export PASSWORD=$( date +%s | sha256sum | base64 | head -c 32 ; echo )
-          export SSH_KEY="$( cat /tmp/cluster/ssh-publickey )"
-          export EC2_AMI_OVERRIDE=ami-02323e873420d8eab
-          export EXPIRATION_DATE=$( date -d '4 hours' --iso=minutes --utc )
-          envsubst </etc/openshift-installer/openshift.yaml >/tmp/cluster/inputs.yaml
-        )
         mkdir /tmp/artifacts/installer
-        cp /tmp/cluster/inputs.yaml /tmp/artifacts/installer/
+        cd /tmp/cluster
 
         echo "Invoking installer ..."
-        
-        cd /tmp/cluster
-        tectonic init --config=inputs.yaml
-        mv -f ${NAME}/* /tmp/cluster/
-        cp config.yaml internal.yaml terraform.tfvars /tmp/artifacts/installer/
-
-        tectonic install --dir=. --log-level=debug
+        OPENSHIFT_INSTALL_CLUSTER_NAME="${INSTANCE_PREFIX}" \
+        OPENSHIFT_INSTALL_BASE_DOMAIN=origin-ci-int-aws.dev.rhcloud.com \
+        OPENSHIFT_INSTALL_EMAIL_ADDRESS=test@ci.openshift.io \
+        OPENSHIFT_INSTALL_PASSWORD=$( date +%s | sha256sum | base64 | head -c 32 ; echo ) \
+        # MODIFIED HERE
+        # changed path to the pull-secret-aws files
+        OPENSHIFT_INSTALL_SSH_PUB_KEY="$( cat /tmp/cluster/ssh-publickey )" \
+        OPENSHIFT_INSTALL_PULL_SECRET="$( cat /tmp/cluster/pull-secret )" \
+        OPENSHIFT_INSTALL_PLATFORM=aws \
+        OPENSHIFT_INSTALL_AWS_REGION=us-east-1 \
+        openshift-install --dir /tmp/artifacts/installer --log-level debug cluster
 
         # wait until oc shows up
         while true; do
@@ -278,17 +253,18 @@ objects:
         fi
         cp $KUBECONFIG /tmp/admin.kubeconfig
         echo "Installation successful"
-    
+
     # Performs cleanup of all created resources
     - name: teardown
       image: ${IMAGE_INSTALLER}
       volumeMounts:
       - name: shared-tmp
         mountPath: /tmp/shared
-      - name: cluster-profile
-        mountPath: /etc/openshift-installer
       - name: artifacts
         mountPath: /tmp/artifacts
+      # MODIFIED HERE, ADDED SECRET MOUNT
+      - name: pull-secret-aws
+        mountPath: /tmp/pull-secret-aws
       env:
       - name: INSTANCE_PREFIX
         value: ${NAMESPACE}-${JOB_NAME_HASH}
@@ -349,11 +325,9 @@ objects:
           wait
 
           echo "Deprovisioning cluster ..."
-          export AWS_SHARED_CREDENTIALS_FILE=/tmp/cluster/credentials
-          cd /tmp/shared/cluster
-          for i in `seq 1 2`; do
-            tectonic destroy --dir=. --log-level=debug
-          done
+          # MODIFIED HERE path
+          export AWS_SHARED_CREDENTIALS_FILE=/tmp/pull-secret-aws/credentials
+          openshift-install --dir /tmp/artifacts/installer --log-level debug destroy-cluster
         }
 
         trap 'teardown' EXIT
