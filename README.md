@@ -9,7 +9,18 @@ Next: Note the files required for the cluster-secrets-aws secret and populate th
 The ssh key-pair is meant to be generated/only used for ci-testing. The private
 key is used only when running the full conformance test suite, so that's optional.
 
-Then: 
+Pick a short namespace name to avoid:
+
+> the S3 bucket name
+> "wking-next-gen-installer-ef260.origin-ci-int-aws.dev.rhcloud.com",
+> generated from the cluster name and base domain, is too long; S3
+> bucket names must be less than 63 characters; please choose a
+> shorter cluster name or base domain
+
+It looks like 22 characters is the max with the
+`${NAMESPACE}-${JOB_NAME_HASH}` approach to cluster naming.
+
+Then:
 
 Create a new project in https://api.ci.openshift.org:
  ```bash
