@@ -20,14 +20,14 @@ oc new-project your-namespace
 Fill in contents of  cluster-profile-aws directory with contents of files:
 
 (see files in `cluster-profile-aws` directory for more info)
- ```bash
-   credentials (see noted format in this repo)
-   pull-secret (quay pull secret json config)
-   ssh-privatekey (only required for full conformance tests, not required for aws-e2e tests)
-   ssh-publickey (required by installer)
+ ```
+   credentials     -see/follow noted format in this repo
+   pull-secret     -quay pull secret json config, as a one-liner
+   ssh-privatekey  -only required for full conformance tests, not required for aws-e2e tests
+   ssh-publickey   -required by installer
 ```
 
-Now run the ci-operator command: 
+Now run the ci-operator command.  To get `ci-operator` binary run `make build` from your checkout of [ci-operator](https://github.com/openshift/ci-operator) 
 ```bash
 ci-operator -template templates/cluster-launch-installer-e2e-new.yaml \
                -config /path/to/openshift/release/ci-operator/config/openshift/installer/master.yaml \
@@ -39,11 +39,11 @@ ci-operator -template templates/cluster-launch-installer-e2e-new.yaml \
 
 You can then access your project in the CI web console, check the pods.
 
-When running the full test suite, conformance test output will be found via
-pod logs for pod/dev container/test.  
+Useful output will be found via pod logs for `pod/dev container setup` for the cluster launch, 
+and pod logs for `pod/dev container/test` for all test output.
 
-You can grab the kubeconfig, copy to your local system, and access the cluster running in AWS.
-From the CI web console in your project, go to pod/dev container/setup and in the terminal, 
+You can `grab the kubeconfig`, copy to your local system, and access the cluster running in AWS.
+From the CI web console in your project, `go to pod/dev container/test terminal`, 
 kubeconfig is at `/tmp/artifacts/installer/auth/kubeconfig`.  Copy that to your local system, then
 `export KUBECONFIG=/path/to/copied/kubeconfig`.
 
