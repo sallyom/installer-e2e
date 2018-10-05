@@ -30,7 +30,7 @@ Fill in contents of  cluster-profile-aws directory with contents of files:
 Now run the ci-operator command.  To get `ci-operator` binary run `make build` from your checkout of [ci-operator](https://github.com/openshift/ci-operator) 
 ```bash
 ci-operator -template templates/cluster-launch-installer-e2e-new.yaml \
-               -config /path/to/openshift/release/ci-operator/config/openshift/installer/master.yaml \
+               -config /path/to/openshift/release/ci-operator/config/openshift/installer/openshift-installer-master.yaml \
                -git-ref=your-gh-username/installer@your-branch \
                -secret-dir=/path/to/cluster-profile-aws \
                -namespace=your-namespace
