@@ -1,25 +1,28 @@
 # installer-e2e
-This repo is my setup/notes for running openshift/installer through ci-operator.
-I use this to launch a cluster in AWS via openshift/installer, and to run CI against the cluster.
-There are a few minor additions to the templates in this repo from the template running in CI; 
-Look in the template for `#MODIFIED` to see the diffs.  The main diff is that I've added a secret 
-to transfer aws credentials and quay pull secret.  
+This repo is my setup/notes for launching openshift/installer through ci-operator running [here](https://api.ci.openshift.org).
+This results in a 3 master 3 worker cluster running the the AWS account for which you supply credentials.
 
-First, get a token and login to the OpenShift CI cluster.
+Whatever repository you are testing with the installer, you will pass this config file to ci-operator:
+
+`openshift/release/ci-operator/config/openshift/the-repo/the-repo-master.yaml`
+
+See [any origin release image repository that currently runs the CI job aws-e2e](https://github.com/openshift/release/tree/master/ci-operator/config/openshift) to find the right config file to pass.
+
+
+There are a few minor additions to the `cluster-launch-installer-e2e.yaml` template in this repo from the template running in CI; 
+Look in `templates/cluster-launch-installer-e2e-modified.yaml` for `#MODIFIED` to see the diffs.  The main diff is that I've added a secret 
+to transfer aws credentials and quay pull secret.  Also, I've commented out the teardown container, because usually I want to work with 
+the cluster once it's launched.  You can uncomment the teardown container to have your cluster auto-destroyed upon a launch (like in CI).
+Or, use the `hiveutil aws-tag-deprovision` cleanup command given below to destroy your cluster otherwise.  
+
+First, get a token and `oc login` to [the OpenShift CI cluster](https://api.ci.openshift.org).
+
 Next: Note the files required for the `cluster-profile-aws secret` and populate their content.
 The ssh key-pair is meant to be generated/only used for ci-testing. The private
-key is used only when running the full conformance test suite, so that's optional.
+key is used only when running the full conformance test suite, that is optional.
 
-Then: 
+Fill in contents of a directory named `cluster-profile-aws` <-important as this dir name is the secret name, with contents of files:
 
-Create a new project in https://api.ci.openshift.org:
- ```bash
-oc new-project your-namespace
-```
-
-Fill in contents of  cluster-profile-aws directory with contents of files:
-
-(see files in `cluster-profile-aws` directory for more info)
  ```
    credentials     -see/follow noted format in this repo
    pull-secret     -quay pull secret json config, as a one-liner
@@ -27,13 +30,20 @@ Fill in contents of  cluster-profile-aws directory with contents of files:
    ssh-publickey   -required by installer
 ```
 
+Then: 
+
+Edit from this repository `templates/cluster-launch-installer-e2e-modified.yaml` the `"your-ns"` to a value of your choice.
+The namespace translates to the base of the cluster-name parameter.  Look in AWS console or ci-operator output for full cluster-name.
+Also, note the `TEST_COMMAND` value and change that accordingly.  You can find an appropriate value for that in the release repo, for 
+example, with the `openshift-cluster-dns-operator` job, [here](https://github.com/openshift/release/blob/master/ci-operator/jobs/openshift/cluster-dns-operator/openshift-cluster-dns-operator-master-presubmits.yaml#L32-L#L34)
+
 Now run the ci-operator command.  To get `ci-operator` binary run `make build` from your checkout of [ci-operator](https://github.com/openshift/ci-operator) 
 ```bash
-ci-operator -template templates/cluster-launch-installer-e2e-new.yaml \
-               -config /path/to/openshift/release/ci-operator/config/openshift/installer/openshift-installer-master.yaml \
-               -git-ref=your-gh-username/installer@your-branch \
+ci-operator -template templates/cluster-launch-installer-e2e-modified.yaml \
+               -config /path/to/openshift/release/ci-operator/config/openshift/whatever-release-repo/whatever-release-repo-master.yaml \
+               -git-ref=your-gh-username/whatever-release-repo@your-branch \
                -secret-dir=/path/to/cluster-profile-aws \
-               -namespace=your-namespace
+               -namespace=the-ns-you-filled-in-the-template-above
 ```
 
 

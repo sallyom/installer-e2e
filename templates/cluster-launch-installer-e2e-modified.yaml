@@ -20,7 +20,12 @@ parameters:
   value: "aws"
 # Ensures the release image is created and tested
 - name: TEST_COMMAND
-  required: true
+  # MODIFIED
+  # Look at openshift/release/ci-operator/jobs/openshift/something/something-somthing-presubmits.yaml,
+  # and grep for the TEST_COMMAND value for the aws-e2e job for
+  # an appropriate value for TEST_COMMAND
+  #required: true
+  value: "TEST_FOCUS='Secrets should be consumable from pods in volume with defaultMode set' run-tests"
 - name: RELEASE_IMAGE_LATEST
   required: true
 
@@ -60,6 +65,8 @@ objects:
     - name: cluster-profile
       #secret:
       #  secretName: ${JOB_NAME_SAFE}-cluster-profile
+      #  This secretName must match the directory name that holds the files
+      #  on your local system.  See README for files in the secret.
       secret:
         secretName: cluster-profile-aws
 
@@ -78,7 +85,6 @@ objects:
       volumeMounts:
       - name: shared-tmp
         mountPath: /tmp/shared
-      #MODIFIED
       - name: cluster-profile
         mountPath: /tmp/cluster
       - name: artifacts
@@ -218,6 +224,7 @@ objects:
       env:
       - name: TYPE
         value: ${CLUSTER_TYPE}
+        # MODIFIED
       - name: AWS_SHARED_CREDENTIALS_FILE
         # MODIFIED
         value: /etc/openshift-installer/credentials
@@ -226,7 +233,7 @@ objects:
       - name: OPENSHIFT_INSTALL_BASE_DOMAIN
         # MODIFIED
         # This is a Route53 Hosted Zone for which you have access to in AWS
-        value: new-installer.openshift.com
+        value: devcluster.openshift.com
       - name: OPENSHIFT_INSTALL_EMAIL_ADDRESS
         value: test@ci.openshift.io
       - name: OPENSHIFT_INSTALL_PASSWORD
@@ -250,101 +257,103 @@ objects:
         exec /bin/openshift-install --dir=/tmp/artifacts/installer --log-level=debug cluster
 
     # Performs cleanup of all created resources
-    - name: teardown
-      image: ${IMAGE_INSTALLER}
-      volumeMounts:
-      - name: shared-tmp
-        mountPath: /tmp/shared
-      - name: cluster-profile
-        mountPath: /etc/openshift-installer
-      - name: artifacts
-        mountPath: /tmp/artifacts
-      env:
-      - name: INSTANCE_PREFIX
-        value: ${NAMESPACE}-${JOB_NAME_HASH}
-      - name: TYPE
-        value: ${CLUSTER_TYPE}
-      - name: KUBECONFIG
-        value: /tmp/artifacts/installer/auth/kubeconfig
-      command:
-      - /bin/bash
-      - -c
-      - |
-        #!/bin/bash
-        function queue() {
-          local TARGET="${1}"
-          shift
-          local LIVE="$(jobs | wc -l)"
-          while [[ "${LIVE}" -ge 10 ]]; do
-            sleep 1
-            LIVE="$(jobs | wc -l)"
-          done
-          echo "${@}"
-          if [[ -n "${FILTER}" ]]; then
-            "${@}" | "${FILTER}" >"${TARGET}" &
-          else
-            "${@}" >"${TARGET}" &
-          fi
-        }
+    #MODIFIED!!! THIS WORKS WELL IF YOU UNCOMMENT, HOWEVER, YOUR CLUSTER DISAPPEARS AS SOON AS IT IS CREATED, AND YOU PROBABLY DON'T WANT THAT.
+    #USE THE CLEANUP CMD GIVEN IN THE README to clean up the AWS cluster, or uncomment the teardown container if that's what you want.
+    # - name: teardown
+    #   image: ${IMAGE_INSTALLER}
+    #   volumeMounts:
+    #   - name: shared-tmp
+    #     mountPath: /tmp/shared
+    #   - name: cluster-profile
+    #     mountPath: /etc/openshift-installer
+    #   - name: artifacts
+    #     mountPath: /tmp/artifacts
+    #   env:
+    #   - name: INSTANCE_PREFIX
+    #     value: ${NAMESPACE}-${JOB_NAME_HASH}
+    #   - name: TYPE
+    #     value: ${CLUSTER_TYPE}
+    #   - name: KUBECONFIG
+    #     value: /tmp/artifacts/installer/auth/kubeconfig
+    #   command:
+    #   - /bin/bash
+    #   - -c
+    #   - |
+    #     #!/bin/bash
+    #     function queue() {
+    #       local TARGET="${1}"
+    #       shift
+    #       local LIVE="$(jobs | wc -l)"
+    #       while [[ "${LIVE}" -ge 45 ]]; do
+    #         sleep 1
+    #         LIVE="$(jobs | wc -l)"
+    #       done
+    #       echo "${@}"
+    #       if [[ -n "${FILTER}" ]]; then
+    #         "${@}" | "${FILTER}" >"${TARGET}" &
+    #       else
+    #         "${@}" >"${TARGET}" &
+    #       fi
+    #     }
 
-        function teardown() {
-          set +e
-          touch /tmp/shared/exit
-          export PATH=$PATH:/tmp/shared
+    #     function teardown() {
+    #       set +e
+    #       touch /tmp/shared/exit
+    #       export PATH=$PATH:/tmp/shared
 
-          echo "Gathering artifacts ..."
-          mkdir -p /tmp/artifacts/pods /tmp/artifacts/nodes /tmp/artifacts/metrics
+    #       echo "Gathering artifacts ..."
+    #       mkdir -p /tmp/artifacts/pods /tmp/artifacts/nodes /tmp/artifacts/metrics
 
-          oc --request-timeout=5s get nodes -o jsonpath --template '{range .items[*]}{.metadata.name}{"\n"}{end}' > /tmp/nodes
-          oc --request-timeout=5s get pods --all-namespaces --template '{{ range .items }}{{ $name := .metadata.name }}{{ $ns := .metadata.namespace }}{{ range .spec.containers }}-n {{ $ns }} {{ $name }} -c {{ .name }}{{ "\n" }}{{ end }}{{ range .spec.initContainers }}-n {{ $ns }} {{ $name }} -c {{ .name }}{{ "\n" }}{{ end }}{{ end }}' > /tmp/containers
-          oc --request-timeout=5s get pods -l openshift.io/component=api --all-namespaces --template '{{ range .items }}-n {{ .metadata.namespace }} {{ .metadata.name }}{{ "\n" }}{{ end }}' > /tmp/pods-api
+    #       oc --request-timeout=5s get nodes -o jsonpath --template '{range .items[*]}{.metadata.name}{"\n"}{end}' > /tmp/nodes
+    #       oc --request-timeout=5s get pods --all-namespaces --template '{{ range .items }}{{ $name := .metadata.name }}{{ $ns := .metadata.namespace }}{{ range .spec.containers }}-n {{ $ns }} {{ $name }} -c {{ .name }}{{ "\n" }}{{ end }}{{ range .spec.initContainers }}-n {{ $ns }} {{ $name }} -c {{ .name }}{{ "\n" }}{{ end }}{{ end }}' > /tmp/containers
+    #       oc --request-timeout=5s get pods -l openshift.io/component=api --all-namespaces --template '{{ range .items }}-n {{ .metadata.namespace }} {{ .metadata.name }}{{ "\n" }}{{ end }}' > /tmp/pods-api
 
-          queue /tmp/artifacts/nodes.json oc --request-timeout=5s get nodes -o json
-          queue /tmp/artifacts/events.json oc --request-timeout=5s get events --all-namespaces -o json
+    #       queue /tmp/artifacts/nodes.json oc --request-timeout=5s get nodes -o json
+    #       queue /tmp/artifacts/events.json oc --request-timeout=5s get events --all-namespaces -o json
 
-          # gather nodes first in parallel since they may contain the most relevant debugging info
-          while IFS= read -r i; do
-            mkdir -p /tmp/artifacts/nodes/$i
-            FILTER=gzip queue /tmp/artifacts/nodes/$i/messages.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/messages
-            oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/journal | sed -e 's|.*href="\(.*\)".*|\1|;t;d' > /tmp/journals
-            while IFS= read -r j; do
-              FILTER=gzip queue /tmp/artifacts/nodes/$i/journal.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/journal/${j}system.journal
-            done < /tmp/journals
-            FILTER=gzip queue /tmp/artifacts/metrics/node-$i.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/metrics
-            queue /tmp/artifacts/nodes/$i/heap oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/debug/pprof/heap
-            FILTER=gzip queue /tmp/artifacts/nodes/$i/secure.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/secure
-            FILTER=gzip queue /tmp/artifacts/nodes/$i/audit.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/audit
-          done < /tmp/nodes
+    #       # gather nodes first in parallel since they may contain the most relevant debugging info
+    #       while IFS= read -r i; do
+    #         mkdir -p /tmp/artifacts/nodes/$i
+    #         FILTER=gzip queue /tmp/artifacts/nodes/$i/messages.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/messages
+    #         oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/journal | sed -e 's|.*href="\(.*\)".*|\1|;t;d' > /tmp/journals
+    #         while IFS= read -r j; do
+    #           FILTER=gzip queue /tmp/artifacts/nodes/$i/journal.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/journal/${j}system.journal
+    #         done < /tmp/journals
+    #         FILTER=gzip queue /tmp/artifacts/metrics/node-$i.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/metrics
+    #         queue /tmp/artifacts/nodes/$i/heap oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/debug/pprof/heap
+    #         FILTER=gzip queue /tmp/artifacts/nodes/$i/secure.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/secure
+    #         FILTER=gzip queue /tmp/artifacts/nodes/$i/audit.gz oc get --request-timeout=20s --raw /api/v1/nodes/$i/proxy/logs/audit
+    #       done < /tmp/nodes
 
-          while IFS= read -r i; do
-            file="$( echo "$i" | cut -d ' ' -f 3 | tr -s ' ' '_' )"
-            queue /tmp/artifacts/metrics/${file}-heap oc exec $i -- /bin/bash -c 'oc get --raw /debug/pprof/heap --server "https://$( hostname ):8443" --config /etc/origin/master/admin.kubeconfig'
-            FILTER=gzip queue /tmp/artifacts/metrics/${file}-api.gz oc exec $i -- /bin/bash -c 'oc get --raw /metrics --server "https://$( hostname ):8443" --config /etc/origin/master/admin.kubeconfig'
-            queue /tmp/artifacts/metrics/${file}-controllers-heap oc exec $i -- /bin/bash -c 'oc get --raw /debug/pprof/heap --server "https://$( hostname ):8444" --config /etc/origin/master/admin.kubeconfig'
-            FILTER=gzip queue /tmp/artifacts/metrics/${file}-controllers.gz oc exec $i -- /bin/bash -c 'oc get --raw /metrics --server "https://$( hostname ):8444" --config /etc/origin/master/admin.kubeconfig'
-          done < /tmp/pods-api
+    #       while IFS= read -r i; do
+    #         file="$( echo "$i" | cut -d ' ' -f 3 | tr -s ' ' '_' )"
+    #         queue /tmp/artifacts/metrics/${file}-heap oc exec $i -- /bin/bash -c 'oc get --raw /debug/pprof/heap --server "https://$( hostname ):8443" --config /etc/origin/master/admin.kubeconfig'
+    #         FILTER=gzip queue /tmp/artifacts/metrics/${file}-api.gz oc exec $i -- /bin/bash -c 'oc get --raw /metrics --server "https://$( hostname ):8443" --config /etc/origin/master/admin.kubeconfig'
+    #         queue /tmp/artifacts/metrics/${file}-controllers-heap oc exec $i -- /bin/bash -c 'oc get --raw /debug/pprof/heap --server "https://$( hostname ):8444" --config /etc/origin/master/admin.kubeconfig'
+    #         FILTER=gzip queue /tmp/artifacts/metrics/${file}-controllers.gz oc exec $i -- /bin/bash -c 'oc get --raw /metrics --server "https://$( hostname ):8444" --config /etc/origin/master/admin.kubeconfig'
+    #       done < /tmp/pods-api
 
-          while IFS= read -r i; do
-            file="$( echo "$i" | cut -d ' ' -f 2,3,5 | tr -s ' ' '_' )"
-            FILTER=gzip queue /tmp/artifacts/pods/${file}.log.gz oc logs --request-timeout=20s $i
-            FILTER=gzip queue /tmp/artifacts/pods/${file}_previous.log.gz oc logs --request-timeout=20s -p $i
-          done < /tmp/containers
+    #       while IFS= read -r i; do
+    #         file="$( echo "$i" | cut -d ' ' -f 2,3,5 | tr -s ' ' '_' )"
+    #         FILTER=gzip queue /tmp/artifacts/pods/${file}.log.gz oc logs --request-timeout=20s $i
+    #         FILTER=gzip queue /tmp/artifacts/pods/${file}_previous.log.gz oc logs --request-timeout=20s -p $i
+    #       done < /tmp/containers
 
-          echo "Waiting for logs ..."
-          wait
+    #       echo "Waiting for logs ..."
+    #       wait
 
-          echo "Deprovisioning cluster ..."
-          # MODIFIED
-          export AWS_SHARED_CREDENTIALS_FILE=/etc/openshift-installer/credentials
-          openshift-install --dir /tmp/artifacts/installer --log-level debug destroy-cluster
-        }
+    #       echo "Deprovisioning cluster ..."
+    #       # MODIFIED
+    #       export AWS_SHARED_CREDENTIALS_FILE=/etc/openshift-installer/credentials
+    #       openshift-install --dir /tmp/artifacts/installer --log-level debug destroy-cluster
+    #     }
 
-        trap 'teardown' EXIT
-        trap 'kill $(jobs -p); exit 0' TERM
+    #     trap 'teardown' EXIT
+    #     trap 'kill $(jobs -p); exit 0' TERM
 
-        for i in `seq 1 120`; do
-          if [[ -f /tmp/shared/exit ]]; then
-            exit 0
-          fi
-          sleep 60 & wait
-        done
+    #     for i in `seq 1 120`; do
+    #       if [[ -f /tmp/shared/exit ]]; then
+    #         exit 0
+    #       fi
+    #       sleep 60 & wait
+    #     done
