@@ -114,6 +114,7 @@ objects:
         FOUND_KUBECONFIG=
         API_UP=
         ROUTER_NAMESPACE=
+        ROUTER_DEPLOYMENT=
         while true; do
           if [[ -f /tmp/shared/exit ]]; then
             echo "Another process exited" 2>&1
@@ -142,10 +143,16 @@ objects:
             # check multiple namespaces while we are transitioning to the new locations
             if oc get deploy/router -n tectonic-ingress 2>/dev/null; then
               ROUTER_NAMESPACE=tectonic-ingress
+              ROUTER_DEPLOYMENT="deploy/router"
+            elif oc get ds/router-default -n openshift-ingress 2>/dev/null; then
+              ROUTER_NAMESPACE=openshift-ingress
+              ROUTER_DEPLOYMENT="ds/router-default"
             elif oc get deploy/router -n openshift-ingress 2>/dev/null; then
               ROUTER_NAMESPACE=openshift-ingress
+              ROUTER_DEPLOYMENT="deploy/router"
             elif oc get deploy/router -n default 2>/dev/null; then
               ROUTER_NAMESPACE=default
+              ROUTER_DEPLOYMENT="deploy/router"
             else
               echo "Waiting for router to be created ..."
               sleep 15 & wait
@@ -158,7 +165,7 @@ objects:
 
         i=0
         MAX_RETRIES=10
-        until oc wait deploy/router -n "${ROUTER_NAMESPACE}" --for condition=available --timeout=10m || [ $i -eq $MAX_RETRIES ]; do
+        until oc wait "${ROUTER_DEPLOYMENT}" -n "${ROUTER_NAMESPACE}" --for condition=available --timeout=10m || [ $i -eq $MAX_RETRIES ]; do
             i=$((i+1))
             [ $i -eq $MAX_RETRIES ] && echo "timeout waiting for router to be available" && exit 1
             echo "error deploy/router did not come up"
@@ -253,8 +260,13 @@ objects:
       - -c
       - |
         #!/bin/sh
+        trap 'rc=$?; if test "${rc}" -ne 0; then touch /tmp/exit; fi; exit "${rc}"' EXIT
+        trap 'CHILDREN=$(jobs -p); if test -n "${CHILDREN}"; then kill ${CHILDREN}; fi' TERM
+
         export _CI_ONLY_STAY_AWAY_OPENSHIFT_INSTALL_AWS_USER_TAGS="{\"expirationDate\": \"$(date -d '4 hours' --iso=minutes --utc)\"}"
-        exec /bin/openshift-install --dir=/tmp/artifacts/installer --log-level=debug cluster
+        /bin/openshift-install version >/tmp/artifacts/installer/version
+        /bin/openshift-install --dir=/tmp/artifacts/installer --log-level=debug cluster &
+        wait
 
     # Performs cleanup of all created resources
     #MODIFIED!!! THIS WORKS WELL IF YOU UNCOMMENT, HOWEVER, YOUR CLUSTER DISAPPEARS AS SOON AS IT IS CREATED, AND YOU PROBABLY DON'T WANT THAT.
