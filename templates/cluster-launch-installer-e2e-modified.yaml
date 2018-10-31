@@ -17,7 +17,7 @@ parameters:
   required: true
 - name: CLUSTER_TYPE
   # MODIFIED
-  value: "aws"
+  value: "your-platform-aws|openstack"
 # Ensures the release image is created and tested
 - name: TEST_COMMAND
   # MODIFIED
@@ -68,7 +68,7 @@ objects:
       #  This secretName must match the directory name that holds the files
       #  on your local system.  See README for files in the secret.
       secret:
-        secretName: cluster-profile-aws
+        secretName: cluster-profile-${CLUSTER_TYPE}
 
     containers:
 
@@ -165,11 +165,13 @@ objects:
 
         i=0
         MAX_RETRIES=10
-        until oc wait "${ROUTER_DEPLOYMENT}" -n "${ROUTER_NAMESPACE}" --for condition=available --timeout=10m || [ $i -eq $MAX_RETRIES ]; do
+        wait_expiry_ts="$(($(date +%s) + 90))"
+        until oc --request-timeout=80s rollout status "${ROUTER_DEPLOYMENT}" -n "${ROUTER_NAMESPACE}" -w; do
             i=$((i+1))
-            [ $i -eq $MAX_RETRIES ] && echo "timeout waiting for router to be available" && exit 1
-            echo "error deploy/router did not come up"
-            sleep 60
+            [ $i -eq $MAX_RETRIES ] && echo "timeout waiting for ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} to be available" && exit 1
+            echo "error ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} did not come up"
+            sleep "$((wait_expiry_ts - $(date +%s)))"
+            wait_expiry_ts="$(($(date +%s) + 90))"
         done
 
         # set up cloud-provider-specific env vars
@@ -183,6 +185,9 @@ objects:
           export PROVIDER_ARGS="-provider=aws -gce-zone=us-east-1"
           mkdir -p ~/.ssh
           cp /tmp/cluster/ssh-privatekey ~/.ssh/kube_aws_rsa || true
+        elif [[ "${CLUSTER_TYPE}" == "openstack" ]]; then
+          mkdir -p ~/.ssh
+          cp /tmp/cluster/ssh-privatekey ~/.ssh/kube_openstack_rsa || true
         fi
 
         mkdir -p /tmp/output
@@ -250,11 +255,23 @@ objects:
       - name: OPENSHIFT_INSTALL_PULL_SECRET_PATH
         value: /etc/openshift-installer/pull-secret
       - name: OPENSHIFT_INSTALL_PLATFORM
-        value: aws
+        value: ${CLUSTER_TYPE}
       - name: OPENSHIFT_INSTALL_AWS_REGION
         value: us-east-1
       - name: OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE
         value: ${RELEASE_IMAGE_LATEST}
+      - name: OPENSHIFT_INSTALL_OPENSTACK_IMAGE
+        value: rhcos
+      - name: OPENSHIFT_INSTALL_OPENSTACK_CLOUD
+        value: openstack-cloud
+      - name: OPENSHIFT_INSTALL_OPENSTACK_REGION
+        value: RegionOne
+      - name: OPENSHIFT_INSTALL_OPENSTACK_EXTERNAL_NETWORK
+        value: public
+      - name: OS_CLOUD
+        value: openstack-cloud
+      - name: OS_CLIENT_CONFIG_FILE
+        value: /etc/openshift-installer/clouds.yaml
       command:
       - /bin/sh
       - -c
@@ -263,10 +280,12 @@ objects:
         trap 'rc=$?; if test "${rc}" -ne 0; then touch /tmp/exit; fi; exit "${rc}"' EXIT
         trap 'CHILDREN=$(jobs -p); if test -n "${CHILDREN}"; then kill ${CHILDREN}; fi' TERM
 
-        export _CI_ONLY_STAY_AWAY_OPENSHIFT_INSTALL_AWS_USER_TAGS="{\"expirationDate\": \"$(date -d '4 hours' --iso=minutes --utc)\"}"
+        mkdir /tmp/artifacts/installer &&
         /bin/openshift-install version >/tmp/artifacts/installer/version
-        /bin/openshift-install --dir=/tmp/artifacts/installer --log-level=debug cluster &
-        wait
+
+        export _CI_ONLY_STAY_AWAY_OPENSHIFT_INSTALL_AWS_USER_TAGS="{\"expirationDate\": \"$(date -d '4 hours' --iso=minutes --utc)\"}"
+        /bin/openshift-install --dir=/tmp/artifacts/installer --log-level=debug create cluster &
+        wait "$!"
 
     # Performs cleanup of all created resources
     #MODIFIED!!! THIS WORKS WELL IF YOU UNCOMMENT, HOWEVER, YOUR CLUSTER DISAPPEARS AS SOON AS IT IS CREATED, AND YOU PROBABLY DON'T WANT THAT.
@@ -357,7 +376,7 @@ objects:
     #       echo "Deprovisioning cluster ..."
     #       # MODIFIED
     #       export AWS_SHARED_CREDENTIALS_FILE=/etc/openshift-installer/credentials
-    #       openshift-install --dir /tmp/artifacts/installer --log-level debug destroy-cluster
+    #       openshift-install --dir /tmp/artifacts/installer --log-level debug destroy cluster
     #     }
 
     #     trap 'teardown' EXIT

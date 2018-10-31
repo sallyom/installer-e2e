@@ -21,13 +21,19 @@ Next: Note the files required for the `cluster-profile-aws secret` and populate 
 The ssh key-pair is meant to be generated/only used for ci-testing. The private
 key is used only when running the full conformance test suite, that is optional.
 
-Fill in contents of a directory named `cluster-profile-aws` <-important as this dir name is the secret name, with contents of files:
+Fill in contents of a directory named `cluster-profile-CLUSTER_TYPE` <-this dir name is the secret name, with contents of files:
 
+when CLUSTER_TYPE=aws:
  ```
    credentials     -see/follow noted format in this repo
    pull-secret     -quay pull secret json config, as a one-liner
    ssh-privatekey  -only required for full conformance tests, not required for aws-e2e tests
    ssh-publickey   -required by installer
+```
+
+when CLUSTER_TYPE=openstack:
+ ```
+   clouds.yaml     -contents of clouds.yaml file that holds openstack credentials
 ```
 
 Then: 
