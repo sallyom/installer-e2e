@@ -1,0 +1,210 @@
+kind: Template
+apiVersion: template.openshift.io/v1
+
+parameters:
+- name: JOB_NAME_SAFE
+  required: true
+- name: JOB_NAME_HASH
+  required: true
+- name: NAMESPACE
+  # MODIFIED
+  value: "your-ns"
+- name: IMAGE_FORMAT
+  required: true
+- name: IMAGE_INSTALLER
+  required: true
+- name: LOCAL_IMAGE_LIBVIRT_INSTALLER
+  required: true
+- name: IMAGE_TESTS
+  required: true
+- name: CLUSTER_TYPE
+  # MODIFIED
+  value: "libvirt"
+# Ensures the release image is created and tested
+- name: TEST_COMMAND
+  # MODIFIED
+  # Look at openshift/release/ci-operator/jobs/openshift/something/something-somthing-presubmits.yaml,
+  # and grep for the TEST_COMMAND value for the aws-e2e job for
+  # an appropriate value for TEST_COMMAND
+  #required: true
+  value: "TEST_FOCUS='Secrets should be consumable from pods in volume with defaultMode set' run-tests"
+- name: RELEASE_IMAGE_LATEST
+  required: true
+
+objects:
+
+# We want the cluster to be able to access these images
+- kind: RoleBinding
+  apiVersion: authorization.openshift.io/v1
+  metadata:
+    name: ${JOB_NAME_SAFE}-image-puller
+    namespace: ${NAMESPACE}
+  roleRef:
+    name: system:image-puller
+  subjects:
+  - kind: SystemGroup
+    name: system:unauthenticated
+
+# The e2e pod spins up a cluster, runs e2e tests, and then cleans up the cluster.
+- kind: Pod
+  apiVersion: v1
+  metadata:
+    name: ${JOB_NAME_SAFE}
+    namespace: ${NAMESPACE}
+    annotations:
+      # we want to gather the teardown logs no matter what
+      ci-operator.openshift.io/wait-for-container-artifacts: teardown
+  spec:
+    restartPolicy: Never
+    activeDeadlineSeconds: 10800
+    terminationGracePeriodSeconds: 900
+    volumes:
+    - name: artifacts
+      emptyDir: {}
+    - name: shared-tmp
+      emptyDir: {}
+    # MODIFIED
+    - name: cluster-profile
+      #secret:
+      #  secretName: ${JOB_NAME_SAFE}-cluster-profile
+      #  This secretName must match the directory name that holds the files
+      #  on your local system.  See README for files in the secret.
+      secret:
+        secretName: cluster-profile-${CLUSTER_TYPE}
+
+    containers:
+
+    # Runs an install
+    - name: setup
+      image: ${LOCAL_IMAGE_LIBVIRT_INSTALLER}
+      volumeMounts:
+      - name: shared-tmp
+        mountPath: /home/packer
+      - name: cluster-profile
+        mountPath: /etc/openshift-installer
+      - name: artifacts
+        mountPath: /tmp/artifacts
+      env:
+      - name: LD_PRELOAD
+        value: /usr/lib64/libnss_wrapper.so
+      - name: HOME
+        value: /home/packer
+      - name: NSS_WRAPPER_PASSWD
+        value: /home/packer/passwd
+      - name: NSS_WRAPPER_GROUP
+        value: /home/packer/group
+      - name: NSS_USERNAME
+        value: packer
+      - name: NSS_GROUPNAME
+        value: packer
+      - name: GOOGLE_PROJECT_ID
+        value: openshift-gce-devel
+      - name: GOOGLE_COMPUTE_ZONE
+        value: us-east1-c
+      - name: INSTANCE_PREFIX
+        value: ${NAMESPACE}
+      command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        trap 'rc=$?; if test "${rc}" -ne 0; then touch "${HOME}"/exit; fi; exit "${rc}"' EXIT
+        trap 'CHILDREN=$(jobs -p); if test -n "${CHILDREN}"; then kill ${CHILDREN}; fi' TERM
+        /generate-user.sh
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so whoami
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so id packer
+        mkdir "${HOME}"
+        mkdir "${HOME}"/.ssh
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so touch "${HOME}"/passwd 
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so touch "${HOME}"/group
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud auth activate-service-account \
+          --quiet --key-file /etc/openshift-installer/gce.json
+        gcloud --quiet config set project "${GOOGLE_PROJECT_ID}"
+        gcloud --quiet config set compute/zone "${GOOGLE_COMPUTE_ZONE}"
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud \
+          compute instances create "${INSTANCE_PREFIX}" \
+          --image-family openshift4-libvirt \
+          --zone "${GOOGLE_COMPUTE_ZONE}" \
+          --machine-type n1-standard-8 \
+          --min-cpu-platform "Intel Haswell" \
+          --boot-disk-type pd-ssd \
+          --boot-disk-size 256GB \
+          --metadata-from-file openshift-pull-secret=/etc/openshift-installer/pull-secret
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute scp \
+          --quiet \
+          --project "${GOOGLE_PROJECT_ID}" \
+          --zone "${GOOGLE_COMPUTE_ZONE}" \
+          --recurse /router-check.sh packer@"${INSTANCE_PREFIX}":~/router-check.sh
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute --project "${GOOGLE_PROJECT_ID}" ssh \
+          --zone "${GOOGLE_COMPUTE_ZONE}" \
+          packer@"${INSTANCE_PREFIX}" \
+          --command 'nohup create-cluster nested > /dev/null 2>&1 &'
+        echo "Waiting for libvirt cluster to be created..."
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute --project "${GOOGLE_PROJECT_ID}" ssh \
+          --zone "${GOOGLE_COMPUTE_ZONE}" \
+          packer@"${INSTANCE_PREFIX}" \
+          --command 'sleep 480 && ./router-check.sh'
+
+
+    # Performs cleanup of all created resources
+    - name: teardown
+      image: ${LOCAL_IMAGE_LIBVIRT_INSTALLER}
+      volumeMounts:
+      - name: shared-tmp
+        mountPath: /tmp/shared
+      - name: cluster-profile
+        mountPath: /etc/openshift-installer
+      - name: artifacts
+        mountPath: /tmp/artifacts
+      env:
+      - name: USER
+        value: packer
+      - name: HOME
+        value: /tmp/shared
+      - name: INSTANCE_PREFIX
+        value: ${NAMESPACE}
+      - name: GOOGLE_PROJECT_ID
+        value: openshift-gce-devel
+      - name: GOOGLE_COMPUTE_ZONE
+        value: us-east1-c
+      command:
+      - /bin/bash
+      - -c
+      - |
+        #!/bin/bash
+        function queue() {
+          local TARGET="${1}"
+          shift
+          local LIVE="$(jobs | wc -l)"
+          while [[ "${LIVE}" -ge 45 ]]; do
+            sleep 1
+            LIVE="$(jobs | wc -l)"
+          done
+          echo "${@}"
+          if [[ -n "${FILTER}" ]]; then
+            "${@}" | "${FILTER}" >"${TARGET}" &
+          else
+            "${@}" >"${TARGET}" &
+          fi
+        }
+
+        function teardown() {
+          set +e
+          touch /tmp/shared/exit
+          echo "Deprovisioning cluster ..."
+          gcloud auth activate-service-account \
+            --quiet --key-file /etc/openshift-installer/gce.json
+          gcloud --quiet config set project "${GOOGLE_PROJECT_ID}"
+          gcloud --quiet config set compute/zone "${GOOGLE_COMPUTE_ZONE}"
+          gcloud compute instances delete "${INSTANCE_PREFIX}"
+        }
+
+        trap 'teardown' EXIT
+        trap 'kill $(jobs -p); exit 0' TERM
+
+        for i in `seq 1 120`; do
+          if [[ -f /tmp/shared/exit ]]; then
+            exit 0
+          fi
+          sleep 60 & wait
+        done

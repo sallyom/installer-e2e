@@ -36,19 +36,25 @@ when CLUSTER_TYPE=openstack:
    clouds.yaml     -contents of clouds.yaml file that holds openstack credentials
 ```
 
+when CLUSTER_TYPE=libvirt:
+ ```
+   pull-secret     -quay pull secret json, as one-liner
+   gce.json        -gce credentials file - since libvirt cluster will be launched within a gce instance
+```
+
 Then: 
 
-Edit from this repository `templates/cluster-launch-installer-e2e-modified.yaml` the `"your-ns"` to a value of your choice.
+Edit from this repository `templates/cluster-launch-installer-e2e-modified.yaml` or `templates/nested-libvirt-installer-e2e-modified.yaml` the `"your-ns"` to a value of your choice.
 The namespace translates to the base of the cluster-name parameter.  Look in AWS console or ci-operator output for full cluster-name.
 Also, note the `TEST_COMMAND` value and change that accordingly.  You can find an appropriate value for that in the release repo, for 
 example, with the `openshift-cluster-dns-operator` job, [here](https://github.com/openshift/release/blob/master/ci-operator/jobs/openshift/cluster-dns-operator/openshift-cluster-dns-operator-master-presubmits.yaml#L32-L#L34)
 
 Now run the ci-operator command.  To get `ci-operator` binary run `make build` from your checkout of [ci-operator](https://github.com/openshift/ci-operator) 
 ```bash
-ci-operator -template templates/cluster-launch-installer-e2e-modified.yaml \
+ci-operator -template templates/cluster-launch-installer-e2e-modified.yaml|nested-libvirt-installer-e2e-modified.yaml \
                -config /path/to/openshift/release/ci-operator/config/openshift/whatever-release-repo/whatever-release-repo-master.yaml \
                -git-ref=your-gh-username/whatever-release-repo@your-branch \
-               -secret-dir=/path/to/cluster-profile-aws \
+               -secret-dir=/path/to/cluster-profile-${CLUSTER_TYPE} \
                -namespace=the-ns-you-filled-in-the-template-above
 ```
 
