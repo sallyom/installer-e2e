@@ -139,11 +139,11 @@ objects:
           --zone "${GOOGLE_COMPUTE_ZONE}" \
           packer@"${INSTANCE_PREFIX}" \
           --command 'nohup create-cluster nested > /dev/null 2>&1 &'
-        echo "Waiting for libvirt cluster to be created..."
+        echo "Sleeping 360s launching libvirt cluster..."
         LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute --project "${GOOGLE_PROJECT_ID}" ssh \
           --zone "${GOOGLE_COMPUTE_ZONE}" \
           packer@"${INSTANCE_PREFIX}" \
-          --command 'sleep 480 && ./router-check.sh'
+          --command 'sleep 360 && ./router-check.sh'
 
 
     # Performs cleanup of all created resources
