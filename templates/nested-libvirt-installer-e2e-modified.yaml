@@ -74,6 +74,69 @@ objects:
 
     containers:
 
+    # Runs cluster tests
+    - name: test
+      image: ${LOCAL_IMAGE_LIBVIRT_INSTALLER}
+      volumeMounts:
+      - name: shared-tmp
+        mountPath: /home/packer
+      - name: cluster-profile
+        mountPath: /etc/openshift-installer
+      - name: artifacts
+        mountPath: /tmp/artifacts
+      env:
+      - name: LD_PRELOAD
+        value: /usr/lib64/libnss_wrapper.so
+      - name: HOME
+        value: /home/packer
+      - name: NSS_WRAPPER_PASSWD
+        value: /home/packer/passwd
+      - name: NSS_WRAPPER_GROUP
+        value: /home/packer/group
+      - name: NSS_USERNAME
+        value: packer
+      - name: NSS_GROUPNAME
+        value: packer
+      - name: GOOGLE_PROJECT_ID
+        value: openshift-gce-devel
+      - name: GOOGLE_COMPUTE_ZONE
+        value: us-east1-c
+      - name: INSTANCE_PREFIX
+        value: ${NAMESPACE}
+      command:
+      - /bin/sh
+      - -c
+      - |
+        #!/bin/sh
+        set -euo pipefail
+        trap 'touch "${HOME}"/exit' EXIT
+        trap 'kill $(jobs -p); exit 0' TERM
+        mock-nss.sh
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud auth activate-service-account \
+          --quiet --key-file /etc/openshift-installer/gce.json
+        gcloud --quiet config set project "${GOOGLE_PROJECT_ID}"
+        gcloud --quiet config set compute/zone "${GOOGLE_COMPUTE_ZONE}"
+        set -x
+        SETUP_SUCCESS=
+        while true; do
+          if [[ -f "${HOME}"/exit ]]; then
+            echo "Another process exited" 2>&1
+            exit 1
+          fi
+          if [[ ! -f "${HOME}"/setup-success ]]; then
+            sleep 15 & wait
+            continue
+          elif [[ -z "${SETUP_SUCCESS}" ]]; then
+            echo "Setup success"
+            SETUP_SUCCESS=1
+          fi
+          break
+        done
+        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute --project "${GOOGLE_PROJECT_ID}" ssh \
+          --zone "${GOOGLE_COMPUTE_ZONE}" \
+          packer@"${INSTANCE_PREFIX}" \
+          --command 'export KUBECONFIG=/home/packer/clusters/nested/auth/kubeconfig && /home/packer/router-check.sh'
+
     # Runs an install
     - name: setup
       image: ${LOCAL_IMAGE_LIBVIRT_INSTALLER}
@@ -108,15 +171,67 @@ objects:
       - -c
       - |
         #!/bin/sh
-        trap 'rc=$?; touch "${HOME}"/exit; exit "${rc}"' EXIT
-        trap 'kill $(jobs -p); exit 0' TERM
-        mock-nss.sh
+        set -euo pipefail
+        trap 'rc=$?; if test "${rc}" -eq 0; then touch "${HOME}"/setup-success; else touch "${HOME}"/exit; fi; exit "${rc}"' EXIT
+        trap 'CHILDREN=$(jobs -p); if test -n "${CHILDREN}"; then kill ${CHILDREN}; fi' TERM
+        cat - > "${HOME}"/router-check.sh << 'EOF'
+        #!/bin/bash
+        set -euo pipefail
 
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so whoami
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so id packer
+        # wait for the router
+        API_UP=
+        ROUTER_NAMESPACE=
+        ROUTER_DEPLOYMENT=
+
+        find_router_deployment()
+        {
+          while true; do
+            if ! oc get nodes 2>/dev/null; then
+              echo "Waiting for API at $(oc whoami --show-server) to respond ..."
+              sleep 15 & wait
+              continue
+            elif [[ -z "${API_UP}" ]]; then
+              echo "API at $(oc whoami --show-server) has responded"
+              API_UP=1
+            fi
+            if [[ -z "${ROUTER_NAMESPACE}" ]]; then
+              # check multiple namespaces while we are transitioning to the new locations
+              if oc get ds/router-default -n openshift-ingress 2>/dev/null; then
+                ROUTER_NAMESPACE=openshift-ingress
+                ROUTER_DEPLOYMENT="ds/router-default"
+              elif oc get deploy/router -n openshift-ingress 2>/dev/null; then
+                ROUTER_NAMESPACE=openshift-ingress
+                ROUTER_DEPLOYMENT="deploy/router"
+              elif oc get deploy/router -n default 2>/dev/null; then
+                ROUTER_NAMESPACE=default
+                ROUTER_DEPLOYMENT="deploy/router"
+              else
+                echo "Waiting for router to be created ..."
+                sleep 15 & wait
+                continue
+              fi
+              echo "Found router in ${ROUTER_NAMESPACE}"
+              break
+            fi
+          done
+          i=0
+          MAX_RETRIES=10
+          wait_expiry_ts="$(($(date +%s) + 90))"
+          until oc --request-timeout=80s rollout status "${ROUTER_DEPLOYMENT}" -n "${ROUTER_NAMESPACE}" -w; do
+            i=$((i+1))
+            [ $i -eq $MAX_RETRIES ] && echo "timeout waiting for ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} to be available" && exit 1
+            echo "error ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} did not come up"
+            sleep "$((wait_expiry_ts - $(date +%s)))"
+            wait_expiry_ts="$(($(date +%s) + 90))"
+          done
+        }
+
+        declare -fxr find_router_deployment
+        timeout 600 bash -ce 'find_router_deployment'
+        EOF
+        chmod +x "${HOME}"/router-check.sh
+        mock-nss.sh
         mkdir "${HOME}"/.ssh
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so touch "${HOME}"/passwd 
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so touch "${HOME}"/group
         LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud auth activate-service-account \
           --quiet --key-file /etc/openshift-installer/gce.json
         gcloud --quiet config set project "${GOOGLE_PROJECT_ID}"
@@ -138,17 +253,12 @@ objects:
           --quiet \
           --project "${GOOGLE_PROJECT_ID}" \
           --zone "${GOOGLE_COMPUTE_ZONE}" \
-          --recurse /bin/router-check.sh packer@"${INSTANCE_PREFIX}":~/router-check.sh
+          --recurse "${HOME}"/router-check.sh packer@"${INSTANCE_PREFIX}":~/router-check.sh
           echo 'Installer will launch libvirt cluster in a gce instance with "${RELEASE_IMAGE_LATEST}"'
         LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute --project "${GOOGLE_PROJECT_ID}" ssh \
           --zone "${GOOGLE_COMPUTE_ZONE}" \
           packer@"${INSTANCE_PREFIX}" \
-          --command 'export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="${RELEASE_IMAGE_LATEST}" && timeout 1200 bash -ce "create-cluster nested 2>&1 | tee output"' | tee /tmp/artifacts/output-e2e-libvirt
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute --project "${GOOGLE_PROJECT_ID}" ssh \
-          --zone "${GOOGLE_COMPUTE_ZONE}" \
-          packer@"${INSTANCE_PREFIX}" \
-          --command './router-check.sh && echo "Install complete! Router check passed!"'
-        exit
+          --command 'export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="${RELEASE_IMAGE_LATEST}" && timeout 1800 bash -ce "create-cluster nested 2>&1 | tee output"' | tee /tmp/artifacts/output-e2e-libvirt
 
     # Performs cleanup of all created resources
     - name: teardown
