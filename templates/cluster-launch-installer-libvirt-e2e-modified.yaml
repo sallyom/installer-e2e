@@ -27,7 +27,7 @@ parameters:
   # and grep for the TEST_COMMAND value for the aws-e2e job for
   # an appropriate value for TEST_COMMAND
   #required: true
-  value: "TEST_FOCUS='Secrets should be consumable from pods in volume with defaultMode set' run-tests"
+  value: "TEST_SUITE=openshift/smoke-4 TEST_FOCUS='Secrets should be consumable from pods in volume with defaultMode set' run-tests"
 - name: RELEASE_IMAGE_LATEST
   required: true
 
@@ -85,8 +85,6 @@ objects:
       - name: artifacts
         mountPath: /tmp/artifacts
       env:
-      - name: LD_PRELOAD
-        value: /usr/lib64/libnss_wrapper.so
       - name: HOME
         value: /home/packer
       - name: NSS_WRAPPER_PASSWD
@@ -148,8 +146,6 @@ objects:
       - name: artifacts
         mountPath: /tmp/artifacts
       env:
-      - name: LD_PRELOAD
-        value: /usr/lib64/libnss_wrapper.so
       - name: HOME
         value: /home/packer
       - name: NSS_WRAPPER_PASSWD
@@ -174,7 +170,7 @@ objects:
         set -euo pipefail
         trap 'rc=$?; if test "${rc}" -eq 0; then touch "${HOME}"/setup-success; else touch "${HOME}"/exit; fi; exit "${rc}"' EXIT
         trap 'CHILDREN=$(jobs -p); if test -n "${CHILDREN}"; then kill ${CHILDREN}; fi' TERM
-        cat - > "${HOME}"/router-check.sh << 'EOF'
+        cat > "${HOME}"/router-check.sh << 'EOF'
         #!/bin/bash
         set -euo pipefail
 
@@ -232,11 +228,11 @@ objects:
         chmod +x "${HOME}"/router-check.sh
         mock-nss.sh
         mkdir "${HOME}"/.ssh
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud auth activate-service-account \
+        gcloud auth activate-service-account \
           --quiet --key-file /etc/openshift-installer/gce.json
         gcloud --quiet config set project "${GOOGLE_PROJECT_ID}"
         gcloud --quiet config set compute/zone "${GOOGLE_COMPUTE_ZONE}"
-        LD_PRELOAD=/usr/lib64/libnss_wrapper.so gcloud compute instances create "${INSTANCE_PREFIX}" \
+        gcloud compute instances create "${INSTANCE_PREFIX}" \
           --image-family openshift4-libvirt \
           --zone "${GOOGLE_COMPUTE_ZONE}" \
           --machine-type n1-standard-8 \
