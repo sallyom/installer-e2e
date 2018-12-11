@@ -17,7 +17,7 @@ parameters:
   required: true
 - name: CLUSTER_TYPE
   # MODIFIED
-  value: "your-platform-aws|openstack"
+  value: "aws"
 # Ensures the release image is created and tested
 - name: TEST_COMMAND
   # MODIFIED
@@ -25,7 +25,7 @@ parameters:
   # and grep for the TEST_COMMAND value for the aws-e2e job for
   # an appropriate value for TEST_COMMAND
   #required: true
-  value: "TEST_SUITE=openshift/smoke-4 TEST_FOCUS='Secrets should be consumable from pods in volume with defaultMode set' run-tests"
+  value: "TEST_SUITE=openshift/smoke-4 run-tests run-tests"
 - name: RELEASE_IMAGE_LATEST
   required: true
 
@@ -141,7 +141,10 @@ objects:
           fi
           if [[ -z "${ROUTER_NAMESPACE}" ]]; then
             # check multiple namespaces while we are transitioning to the new locations
-            if oc get deploy/router -n tectonic-ingress 2>/dev/null; then
+            if oc get deploy/router-default -n openshift-ingress 2>/dev/null; then
+              ROUTER_NAMESPACE=openshift-ingress
+              ROUTER_DEPLOYMENT="deploy/router-default"
+            elif oc get deploy/router -n tectonic-ingress 2>/dev/null; then
               ROUTER_NAMESPACE=tectonic-ingress
               ROUTER_DEPLOYMENT="deploy/router"
             elif oc get ds/router-default -n openshift-ingress 2>/dev/null; then
@@ -163,15 +166,32 @@ objects:
           break
         done
 
-        i=0
-        MAX_RETRIES=10
-        wait_expiry_ts="$(($(date +%s) + 90))"
-        until oc --request-timeout=80s rollout status "${ROUTER_DEPLOYMENT}" -n "${ROUTER_NAMESPACE}" -w; do
-            i=$((i+1))
-            [ $i -eq $MAX_RETRIES ] && echo "timeout waiting for ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} to be available" && exit 1
-            echo "error ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} did not come up"
-            sleep "$((wait_expiry_ts - $(date +%s)))"
-            wait_expiry_ts="$(($(date +%s) + 90))"
+        TARGET="$(date -d '10 minutes' +%s)"
+        NOW="$(date +%s)"
+        while [[ "${NOW}" -lt "${TARGET}" ]]; do
+          REMAINING="$((TARGET - NOW))"
+          if oc --request-timeout="${REMAINING}s" rollout status "${ROUTER_DEPLOYMENT}" -n "${ROUTER_NAMESPACE}" -w; then
+            break
+          fi
+          sleep 2
+          NOW="$(date +%s)"
+        done
+        [[ "${NOW}" -ge "${TARGET}" ]] && echo "timeout waiting for ${ROUTER_NAMESPACE}/${ROUTER_DEPLOYMENT} to be available" && exit 1
+
+        # wait until the image registry changes propogate to the apiserver to avoid
+        # unnecessary restarts
+        until oc get is -n openshift php 2>/dev/null; do
+          sleep 10
+        done
+        until [[ -n "$( oc get is -n openshift php --template '{{ .status.dockerImageRepository }}' 2>/dev/null )" ]]; do
+          sleep 10
+        done
+        # oh god the blood
+        sleep 180
+        # wait until oc login -n kubeadmin succeeds
+        password=$(cat /tmp/artifacts/installer/auth/kubeadmin-password)
+        until oc login -u kubeadmin -p "${password}" 2>/dev/null; do
+          sleep 10
         done
 
         # set up cloud-provider-specific env vars
@@ -187,6 +207,7 @@ objects:
           cp /tmp/cluster/ssh-privatekey ~/.ssh/kube_aws_rsa || true
           export PROVIDER_ARGS="-provider=aws -gce-zone=us-east-1"
           export TEST_PROVIDER='{"type":"aws","zone":"us-east-1"}'
+          export KUBE_SSH_USER=core
         elif [[ "${CLUSTER_TYPE}" == "openstack" ]]; then
           mkdir -p ~/.ssh
           cp /tmp/cluster/ssh-privatekey ~/.ssh/kube_openstack_rsa || true
@@ -194,15 +215,6 @@ objects:
 
         mkdir -p /tmp/output
         cd /tmp/output
-
-        # install telemetry client (TEMPORARY)
-        set +e
-        curl https://raw.githubusercontent.com/openshift/telemeter/master/deploy/default-rules > /tmp/rules
-        oc create ns openshift-telemetry
-        oc adm policy add-cluster-role-to-user cluster-reader -z default -n openshift-telemetry
-        oc create secret generic telemeter-client --from-literal=to=https://telemeter.svc.ci.openshift.org --from-literal=id=${NAMESPACE}-${JOB_NAME_HASH} --from-file=token=/tmp/cluster/telemeter-token --from-literal=salt=random-salt --from-file=rules=/tmp/rules --dry-run -o yaml | oc apply -n openshift-telemetry -f -
-        oc create -f https://raw.githubusercontent.com/openshift/telemeter/master/deploy/telemeter-client-openshift.yaml -n openshift-telemetry
-        set -e
 
         function run-tests() {
           if which openshift-tests && [[ -n "${TEST_SUITE-}" ]]; then
@@ -265,7 +277,7 @@ objects:
       - name: OPENSHIFT_INSTALL_PLATFORM
         value: ${CLUSTER_TYPE}
       - name: OPENSHIFT_INSTALL_AWS_REGION
-        value: us-east-1
+        value: us-east-2
       - name: OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE
         value: ${RELEASE_IMAGE_LATEST}
       - name: OPENSHIFT_INSTALL_OPENSTACK_IMAGE
